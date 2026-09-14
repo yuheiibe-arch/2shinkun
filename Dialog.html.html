@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link rel="stylesheet" href="https://ssl.gstatic.com/docs/script/css/add-ons1.css">
+  </head>
+  <body>
+    <div class="block">
+      <p>処理するシートを選択してください。</p>
+      <div class="block">
+        <select id="sheet-select" style="width: 100%;">
+          <? for (let i = 0; i < sheetNames.length; i++) { ?>
+            <? let selected = sheetNames[i].includes(defaultSelection) ? 'selected' : ''; ?>
+            <option value="<?= sheetNames[i] ?>" <?= selected ?>>
+              <?= sheetNames[i] ?>
+            </option>
+          <? } ?>
+        </select>
+      </div>
+      <br>
+      <div class="block" style="text-align: right;">
+        <button class="action" onclick="runScript(this)">実行</button>
+        <button onclick="google.script.host.close()">キャンセル</button>
+      </div>
+    </div>
+
+    <script>
+      // 引数 btn でボタンを受け取るように修正
+      function runScript(btn) {
+        const selectedSheet = document.getElementById('sheet-select').value;
+        
+        // ボタンを無効化し、表示を処理中に変更
+        btn.disabled = true; 
+        btn.innerText = '処理中...'; 
+
+        google.script.run
+          .withSuccessHandler(function() {
+            google.script.host.close();
+          })
+          .withFailureHandler(function(error) {
+            alert('エラー: ' + error.message);
+            // エラー時はボタンを復活させる
+            btn.disabled = false;
+            btn.innerText = '実行';
+            google.script.host.close();
+          })
+          .runProcess(selectedSheet);
+      }
+    </script>
+  </body>
+</html>
