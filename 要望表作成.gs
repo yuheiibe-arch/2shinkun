@@ -28,7 +28,9 @@ function append2ndConsultationRequests(sourceSheet) {
   
   for (let i = 3; i < data.length; i++) {
     let baseLoc = data[i][0];
-    if (!baseLoc) break; 
+    
+    // ★ここが原因でした。「break」を「continue」に変更（空欄行で止まらず次へ）
+    if (!baseLoc) continue; 
     
     if (baseLoc === '千葉NT') baseLoc = '千葉ニュータウン中央';
     
@@ -40,11 +42,24 @@ function append2ndConsultationRequests(sourceSheet) {
       locName = `${baseLoc}（${dept}）`; 
     }
     
-    const searchKey = _normalizeForIdSearch(locName);
-    const fallbackKey = _normalizeForIdSearch(baseLoc);
-    const clinicId = masterIdMap[searchKey] || masterIdMap[fallbackKey] || '';
+    // ★亀有・北葛西のハードコード ＆ その他はマスタ検索
+    let clinicId = '';
+    if (baseLoc.includes('亀有')) {
+      clinicId = dept === '内科' ? '13' : '11';
+    } else if (baseLoc.includes('北葛西')) {
+      clinicId = dept === '内科' ? '6' : '4';
+    } else {
+      const searchKey = _normalizeForIdSearch(locName);
+      const fallbackKey = _normalizeForIdSearch(baseLoc);
+      clinicId = masterIdMap[searchKey] || masterIdMap[fallbackKey] || '';
+    }
 
     for (let j = 2; j < data[i].length; j++) {
+      let timeSlot = timeHeaders[j];
+      
+      // ★安全装置：午前・午後・夜間 以外（金額など）は無視する
+      if (timeSlot !== '午前' && timeSlot !== '午後' && timeSlot !== '夜間') continue;
+
       const val = parseInt(data[i][j], 10);
       if (!val || val < 1) continue;
       
@@ -57,7 +72,6 @@ function append2ndConsultationRequests(sourceSheet) {
       date.setFullYear(targetYear);
       if (isNaN(date.getTime())) continue;
       
-      let timeSlot = timeHeaders[j];
       let hours = 0;
       let start = '', end = '';
       
@@ -66,12 +80,19 @@ function append2ndConsultationRequests(sourceSheet) {
         else if (val === 3) { start = '10:00'; end = '13:00'; hours = 3; }
         else if (val === 4) { start = '09:00'; end = '13:00'; hours = 4; }
       } else if (timeSlot === '午後') {
-        if (val === 1) { start = '17:00'; end = '20:00'; hours = 3; }
+        // ★午後1を正しい時間（1h）に修正
+        if (val === 1) { start = '17:00'; end = '18:00'; hours = 1; }
         else if (val === 2) { start = '15:00'; end = '17:00'; hours = 2; }
         else { start = '15:00'; end = '18:00'; hours = 3; }
       } else if (timeSlot === '夜間') {
         if (val === 2) { start = '18:00'; end = '20:00'; hours = 2; }
         else { start = '18:00'; end = '21:00'; hours = 3; }
+      }
+      
+      // ★北葛西の20時制限を追加
+      if (baseLoc.includes('北葛西') && end === '21:00') {
+        end = '20:00';
+        if (start === '18:00' && hours === 3) hours = 2;
       }
       
       if (hours === 0) continue;
@@ -137,7 +158,7 @@ function append2ndConsultationRequests(sourceSheet) {
     headerRange.setHorizontalAlignment('left');
   }
 
-  // ★追加：対象月（例:10月なら10月1日）以降のデータを削除
+  // 対象月以降のデータを削除
   const targetMonthStart = new Date(targetYear, targetMonth - 1, 1);
   const existingData = targetSheet.getDataRange().getValues();
   let firstRowToDelete = -1;

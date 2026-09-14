@@ -1,6 +1,7 @@
 /**
  * ====================================================================
- * 募集リスト作成 ＆ 定期・単独の振り分けロジック
+ * 2. 募集リスト作成 ＆ 定期・単独の振り分け（作業リストから読み込み）
+ * 【北葛西20時制限 ＆ 内科2診アラート実装 版】
  * ====================================================================
  */
 
@@ -33,106 +34,99 @@ function createRecruitmentListFromActiveSheet() {
     }
 
     const data = sheet.getDataRange().getValues();
+    
     let startIdx = -1;
     for (let i = 0; i < data.length; i++) {
-      if (data[i][0] === '拠点名' && data[i][1] === '該当日') { startIdx = i; break; }
+      if (data[i][0] === '拠点名' && data[i][1] === '該当日') {
+        startIdx = i;
+        break;
+      }
     }
     if (startIdx === -1) throw new Error('左側に「作業リスト」が見つかりません。先に作業リストを作成してください。');
 
     const START_ROW = startIdx + 1; 
-    const calendarEndIdx = startIdx;
+    const workData = data.slice(startIdx + 1); 
     const groups = {};
-    const dateHeaders = data[0]; // ★修正: 1行目の日付ヘッダーを正しく取得
-    const timeHeaders = data[2];
-    const fiscalYear = (targetMonth <= 3) ? targetYear - 1 : targetYear;
-    if (typeof _wageMasterMap2025 === 'undefined' || !_wageMasterMap2025) initializeWageData(); 
+    
+    // ★内科の2診シフトを検知・記録するためのセット
+    const internalMedicineAlerts = new Set(); 
 
-    // カレンダーから直接データ取得
-    for (let i = 3; i < calendarEndIdx; i++) {
-      let loc = data[i][0];
-      if (!loc) continue;
-      if (loc === '千葉NT') loc = '千葉ニュータウン中央';
-      let rawDept = data[i][1] || '小児科'; 
-      let dept = rawDept.includes('内科') ? '内科' : '小児科';
+    workData.forEach(row => {
+      const [loc, dateVal, dayOfWeekRaw, weekNumRaw, timeSlot, wageStr, , deptRaw, dailyPayVal, hoursVal] = row;
+      if (!loc || !dateVal || !wageStr) return; 
 
-      for (let j = 2; j < data[i].length; j++) {
-        const rawVal = data[i][j];
-        if (!rawVal) continue;
-        const valStr = String(rawVal).toLowerCase();
-        if (valStr.includes('f')) continue; // f付きは無視
-
-        const valNum = parseInt(valStr, 10);
-        if (isNaN(valNum) || valNum < 1) continue;
-
-        // ★修正: 列番号の計算ではなく、1行目の日付データを直接読み取る
-        const dateVal = dateHeaders[j];
-        if (!dateVal) continue;
-        const dObj = new Date(dateVal);
-        dObj.setFullYear(targetYear);
-        if (isNaN(dObj.getTime())) continue;
-
-        const dateStr = Utilities.formatDate(dObj, "JST", "yyyy-MM-dd");
-        const isHoliday = HOLIDAYS_LIST.includes(dateStr);
-        const dayOfWeek = DAYS_OF_WEEK_JP[dObj.getDay()];
-        const groupDay = isHoliday ? '祝' : dayOfWeek;
-        const weekNum = `第${Math.floor((dObj.getDate() - 1) / 7) + 1}週`;
-
-        let timeSlot = "", start = "", end = "", hours = valNum;
-        let isSplit17to20 = false;
-        let timeTypeForRate = "";
-
-        if (timeHeaders[j] === '午前') {
-          timeTypeForRate = 'am';
-          if (valNum === 2) { timeSlot = '10:00~12:00'; start = '10:00'; end = '12:00'; }
-          else if (valNum === 3) { timeSlot = '10:00~13:00'; start = '10:00'; end = '13:00'; }
-          else if (valNum === 4) { timeSlot = '09:00~13:00'; start = '09:00'; end = '13:00'; }
-          else { timeSlot = `午前(${valNum}h)`; start = '09:00'; end = '12:00'; }
-        } else if (timeHeaders[j] === '午後') {
-          timeTypeForRate = 'pm';
-          if (valNum === 1) { timeSlot = '17:00~20:00'; start = '17:00'; end = '20:00'; hours = 3; isSplit17to20 = true; } 
-          else if (valNum === 2) { timeSlot = '15:00~17:00'; start = '15:00'; end = '17:00'; }
-          else { timeSlot = '15:00~18:00'; start = '15:00'; end = '18:00'; }
-        } else if (timeHeaders[j] === '夜間') {
-          timeTypeForRate = 'nt';
-          if (valNum === 2) { timeSlot = '18:00~20:00'; start = '18:00'; end = '20:00'; }
-          else { timeSlot = '18:00~21:00'; start = '18:00'; end = '21:00'; }
-        }
-        
-        if (hours === 0) continue;
-
-        const dayTypeForRate = (dayOfWeek === '祝' || dayOfWeek === '日' || dayOfWeek === '土') ? 'hol' : 'wd';
-        const clinicWages = getClinicWages(loc);
-        let targetRates = null;
-        if (clinicWages && clinicWages.length > 0) {
-          let targetDeptData = clinicWages.find(w => w.department.includes(dept)) || clinicWages[0];
-          targetRates = fiscalYear >= 2026 ? targetDeptData.rates.y2026 : targetDeptData.rates.y2025;
-        }
-
-        let wageStr = "";
-        let dailyPay = 0;
-        if (isSplit17to20) {
-          let pmWage = targetRates ? (Number(targetRates[`${dayTypeForRate}_pm`]) || 0) : 0;
-          let ntWage = targetRates ? (Number(targetRates[`${dayTypeForRate}_nt`]) || 0) : 0;
-          wageStr = pmWage + " / " + ntWage; 
-          dailyPay = (pmWage * 1) + (ntWage * 2); 
-        } else {
-          let wage = targetRates ? (Number(targetRates[`${dayTypeForRate}_${timeTypeForRate}`]) || 0) : 0;
-          wageStr = wage;
-          dailyPay = wage * hours;
-        }
-
-        const simpleTime = timeSlot.replace('~', '-');
-        const key = `${loc}-${timeSlot}-${groupDay}`;
-
-        if (!groups[key]) {
-          groups[key] = {
-            loc, dept, title: `${loc}／${simpleTime}／${groupDay}`,
-            groupDay: groupDay, start, end, hours, wageStr, dailyPay, dates: []
-          };
-        }
-        groups[key].dates.push({ date: dObj, dateStr: dateStr, display: `${Utilities.formatDate(dObj, "JST", "MM/dd")}(${dayOfWeek})`, weekNum: weekNum });
+      let dateObj;
+      if (dateVal instanceof Date) {
+        dateObj = new Date(dateVal);
+        dateObj.setFullYear(targetYear);
+      } else {
+        dateObj = new Date(`${targetYear}/${dateVal}`);
       }
-    }
+      if (isNaN(dateObj.getTime())) return;
+
+      const dateStr = Utilities.formatDate(dateObj, "JST", "yyyy-MM-dd");
+      const isHoliday = HOLIDAYS_LIST.includes(dateStr);
+      const dayOfWeek = DAYS_OF_WEEK_JP[dateObj.getDay()];
+      const groupDay = isHoliday ? '祝' : dayOfWeek;
+      const weekNum = `第${Math.floor((dateObj.getDate() - 1) / 7) + 1}週`;
+
+      const timeStr = String(timeSlot);
+      let simpleTime = timeStr.replace('~', '-');
+      
+      let dept = deptRaw ? String(deptRaw).trim() : '小児科';
+
+      // ★内科シフトの場合はアラート用に記録しておく
+      if (dept.includes('内科')) {
+        internalMedicineAlerts.add(`${loc} (${Utilities.formatDate(dateObj, "JST", "MM/dd")})`);
+      }
+
+      let start = '', end = '';
+      let hours = Number(hoursVal) || 0;
+      let dailyPay = Number(dailyPayVal) || 0;
+
+      const m = timeStr.match(/(\d{2}:\d{2})~(\d{2}:\d{2})/);
+      if (m) {
+        start = m[1]; end = m[2]; 
+      } else {
+        const hourMatch = timeStr.match(/(\d+)h/);
+        if (hourMatch) { start = '09:00'; end = `(${hourMatch[1]}h)`; }
+      }
+
+      // ★「北葛西」のみ「20:00営業終了」制限を適用（亀有は除外）
+      if (loc.includes('北葛西')) {
+        if (end === '21:00') {
+          end = '20:00'; // 21時を20時で打ち切り
+          simpleTime = simpleTime.replace('21:00', '20:00');
+          // 18:00-21:00(3h)だった場合は2hに補正し、金額も2/3に調整
+          if (start === '18:00' && hours === 3) {
+            hours = 2;
+            dailyPay = Math.floor((dailyPay / 3) * 2);
+          }
+        }
+      }
+      
+      const key = `${loc}-${dept}-${simpleTime}-${groupDay}`;
+
+      if (!groups[key]) {
+        let titleName = loc;
+        if (dept !== '小児科') titleName = `${loc}(${dept})`;
+        
+        groups[key] = {
+          loc, dept, title: `${titleName}／${simpleTime}／${groupDay}`,
+          groupDay: groupDay, start, end, 
+          hours: hours,
+          wageStr: wageStr, dailyPay: dailyPay,
+          dates: []
+        };
+      }
+      
+      groups[key].dates.push({ 
+        date: dateObj, 
+        dateStr: dateStr, 
+        display: `${Utilities.formatDate(dateObj, "JST", "MM/dd")}(${dayOfWeek})`, 
+        weekNum: weekNum 
+      });
+    });
 
     const output = [];
     const singleShiftsForCSV = []; 
@@ -159,13 +153,16 @@ function createRecruitmentListFromActiveSheet() {
 
     sortedLocs.forEach(loc => {
       let hasRecurring = false;
+      
       locKeys[loc].forEach(g => { 
         const expected = expectedCounts[g.groupDay];
         g.isWeekly = (g.dates.length === expected && expected > 0 && g.groupDay !== '祝');
         if (g.isWeekly) hasRecurring = true; 
       });
 
-      if (hasRecurring) output.push([`▼▼▼ ${loc} ▼▼▼`, '', '', '', '', '', '', '', '', '']);
+      if (hasRecurring) {
+        output.push([`▼▼▼ ${loc} ▼▼▼`, '', '', '', '', '', '', '', '', '']);
+      }
 
       const dayRank = { '月':1, '火':2, '水':3, '木':4, '金':5, '土':6, '日':7, '祝':8 };
       locKeys[loc].sort((a, b) => (dayRank[a.groupDay] || 9) - (dayRank[b.groupDay] || 9));
@@ -180,15 +177,43 @@ function createRecruitmentListFromActiveSheet() {
           const pattern = g.dates.map(d => d.weekNum + d.display.slice(-3)).join('\n');
           const dateList = g.dates.map(d => d.display).join('\n');
           
-          output.push([ `【毎週】${g.title}`, `${monthStart}～${monthEnd}`, g.start, g.end, pattern, dateList, g.wageStr, subH, subC, '' ]);
+          output.push([
+            `【毎週】${g.title}`, `${monthStart}～${monthEnd}`, 
+            g.start, g.end, 
+            pattern, dateList, 
+            g.wageStr, subH, subC, '' 
+          ]);
         } else {
-          let targetLoc = g.loc;
-          if (targetLoc.includes('亀有') || targetLoc.includes('北葛西')) targetLoc = `${targetLoc}（${g.dept}）`; 
-          const idData = getClinicIdData(targetLoc); 
+          let clinicId = "";
+          let deptCode = "";
+
+          // 亀有・北葛西のハードコード処理
+          if (g.loc.includes('亀有')) {
+            clinicId = g.dept.includes('内科') ? '13' : '11';
+            deptCode = clinicId;
+          } else if (g.loc.includes('北葛西')) {
+            clinicId = g.dept.includes('内科') ? '6' : '4';
+            deptCode = clinicId;
+          } else {
+            // その他の動的取得
+            let idData = getClinicIdData(`${g.loc}（${g.dept}）`);
+            if (!idData || !idData.clinicId) {
+              idData = getClinicIdData(g.loc);
+            }
+            clinicId = idData ? idData.clinicId : "";
+            deptCode = idData ? idData.departmentCode : "";
+          }
+
           g.dates.forEach(dInfo => {
             singleShiftsForCSV.push({
-              loc: targetLoc, dept: g.dept, dateStr: dInfo.dateStr, start: g.start, end: g.end,
-              wageStr: g.wageStr, clinicId: idData.clinicId, departmentCode: idData.departmentCode
+              loc: g.loc,
+              dept: g.dept,
+              dateStr: dInfo.dateStr,
+              start: g.start,
+              end: g.end,
+              wageStr: g.wageStr, 
+              clinicId: clinicId,
+              departmentCode: deptCode
             });
           });
         }
@@ -211,15 +236,19 @@ function createRecruitmentListFromActiveSheet() {
       outRange.setVerticalAlignment('top');
 
       const summaryBox = [
-        ['追加拠点数', sortedLocs.length], ['追加枠数', totalCount],
-        ['総時間', totalH], ['総額', totalCost]
+        ['UI出力拠点数', sortedLocs.length],
+        ['UI出力枠数', totalCount],
+        ['定期(UI)時間', totalH],
+        ['定期総額', totalCost]
       ];
       const sRow = START_ROW + finalData.length + 2;
       sheet.getRange(sRow, 13, 4, 2).setValues(summaryBox).setNumberFormat('#,##0');
       sheet.getRange(sRow + 3, 14).setNumberFormat('"¥"#,##0');
 
       finalData.forEach((r, i) => {
-        if (i > 0 && i < finalData.length - 1 && !r[0].startsWith('▼▼▼')) sheet.getRange(START_ROW + i, 22).insertCheckboxes();
+        if (i > 0 && i < finalData.length - 1 && !r[0].startsWith('▼▼▼')) {
+          sheet.getRange(START_ROW + i, 22).insertCheckboxes();
+        }
       });
     }
 
@@ -227,7 +256,20 @@ function createRecruitmentListFromActiveSheet() {
       generateChunkedCSVSheets(book, targetYear, targetMonth, singleShiftsForCSV);
     }
 
-    book.toast('募集リスト（定期）と CSVシート（不定期/単独） の作成が完了しました。', '完了', 5);
+    // ★内科の2診が含まれていた場合のアラート表示
+    if (internalMedicineAlerts.size > 0) {
+      const alertMsg = Array.from(internalMedicineAlerts).slice(0, 15).join('\n') + 
+                       (internalMedicineAlerts.size > 15 ? `\n...他 ${internalMedicineAlerts.size - 15} 件` : '');
+      ui.alert(
+        '⚠️【警告】内科の2診シフトが出力されています⚠️\n\n' +
+        '内科の2診はほぼ発生しないはずですが、以下のシフトが「内科」として検知・出力されました。\n' +
+        '意図した募集か必ずご確認ください。\n\n' +
+        alertMsg
+      );
+    } else {
+      book.toast('募集リスト（定期）と CSVシート（不定期/単独） の作成が完了しました。', '完了', 5);
+    }
+
   } catch (e) {
     ui.alert('エラー: ' + e.message);
   }
