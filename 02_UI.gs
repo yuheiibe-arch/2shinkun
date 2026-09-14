@@ -31,13 +31,28 @@ function showSheetSelectionDialog() {
     return;
   }
 
-  const sheetNames = urlSheet.getRange(2, 1, urlSheet.getLastRow() - 1, 1).getValues().flat().filter(name => name);
+  // ★修正: 今月より前の過去の月をリストから除外する
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth() + 1;
+
+  const sheetNames = urlSheet.getRange(2, 1, urlSheet.getLastRow() - 1, 1).getValues().flat().filter(name => {
+    if (!name) return false;
+    const match = String(name).match(/(\d{4})[年\/](\d{1,2})/);
+    if (match) {
+      const y = parseInt(match[1], 10);
+      const m = parseInt(match[2], 10);
+      if (y < currentYear) return false;
+      if (y === currentYear && m < currentMonth) return false;
+    }
+    return true;
+  });
+
   if (sheetNames.length === 0) {
-    SpreadsheetApp.getUi().alert('URLシートにシート名がありません。');
+    SpreadsheetApp.getUi().alert('処理可能な対象月（今月以降）がURLシートにありません。');
     return;
   }
 
-  // デフォルト選択肢（リスト内の選択用）
   const nextMonth = new Date();
   nextMonth.setMonth(nextMonth.getMonth() + 1);
   const defaultSelection = `${nextMonth.getFullYear()}年${nextMonth.getMonth() + 1}月`;

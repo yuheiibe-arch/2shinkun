@@ -1,20 +1,22 @@
 /**
  * ====================================================================
- * ２診要望一覧へのデータ転記ロジック
+ * ２診要望一覧へのデータ転記ロジック (スマート削除・上書き機能付き)
  * ====================================================================
  */
 function append2ndConsultationRequests(sourceSheet) {
   const ss = sourceSheet.getParent();
   const masterIdMap = getClinicIdMap();
   
-  let targetYear;
+  let targetYear, targetMonth;
   const sheetNameMatch = sourceSheet.getName().match(/^(\d{4})\/(\d{1,2})$/);
   if (sheetNameMatch) {
     targetYear = parseInt(sheetNameMatch[1], 10);
+    targetMonth = parseInt(sheetNameMatch[2], 10);
   } else {
     const nextMonth = new Date();
     nextMonth.setMonth(nextMonth.getMonth() + 1);
     targetYear = nextMonth.getFullYear();
+    targetMonth = nextMonth.getMonth() + 1;
   }
 
   const data = sourceSheet.getDataRange().getValues();
@@ -64,10 +66,12 @@ function append2ndConsultationRequests(sourceSheet) {
         else if (val === 3) { start = '10:00'; end = '13:00'; hours = 3; }
         else if (val === 4) { start = '09:00'; end = '13:00'; hours = 4; }
       } else if (timeSlot === '午後') {
-        if (val === 2) { start = '15:00'; end = '17:00'; hours = 2; }
-        else if (val === 3) { start = '15:00'; end = '18:00'; hours = 3; }
+        if (val === 1) { start = '17:00'; end = '20:00'; hours = 3; }
+        else if (val === 2) { start = '15:00'; end = '17:00'; hours = 2; }
+        else { start = '15:00'; end = '18:00'; hours = 3; }
       } else if (timeSlot === '夜間') {
-        start = '18:00'; end = '21:00'; hours = 3;
+        if (val === 2) { start = '18:00'; end = '20:00'; hours = 2; }
+        else { start = '18:00'; end = '21:00'; hours = 3; }
       }
       
       if (hours === 0) continue;
@@ -132,7 +136,34 @@ function append2ndConsultationRequests(sourceSheet) {
     headerRange.setValues([['拠点', '日付', '開始時間', '終了時間', '募集時間', '月間要望数', 'clinicID']]);
     headerRange.setHorizontalAlignment('left');
   }
+
+  // ★追加：対象月（例:10月なら10月1日）以降のデータを削除
+  const targetMonthStart = new Date(targetYear, targetMonth - 1, 1);
+  const existingData = targetSheet.getDataRange().getValues();
+  let firstRowToDelete = -1;
+
+  for (let i = 1; i < existingData.length; i++) {
+    const rowDateStr = existingData[i][1];
+    if (!rowDateStr) continue;
+    
+    const d = new Date(rowDateStr);
+    if (!isNaN(d.getTime())) {
+      if (d >= targetMonthStart) {
+        firstRowToDelete = i + 1; 
+        break;
+      }
+    }
+  }
+
+  if (firstRowToDelete !== -1) {
+    const rowsToDelete = targetSheet.getLastRow() - firstRowToDelete + 1;
+    if (rowsToDelete > 0) {
+      targetSheet.getRange(firstRowToDelete, 1, rowsToDelete, targetSheet.getLastColumn()).clearContent();
+      targetSheet.getRange(firstRowToDelete, 1, rowsToDelete, targetSheet.getLastColumn()).setBackground(null);
+    }
+  }
   
+  // 新規データの追記
   const lastRow = targetSheet.getLastRow();
   const dataRange = targetSheet.getRange(lastRow + 1, 1, outputValues.length, 7);
   

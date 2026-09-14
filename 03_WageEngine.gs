@@ -4,12 +4,43 @@
  * ====================================================================
  */
 
+// ★追加：IDマスタキャッシュ用
+let _idMasterCache = null;
+
 function initializeWageData() {
-  if (_wageMasterMap2025 && _wageData2026) return;
+  if (_wageMasterMap2025 && _wageData2026 && _idMasterCache) return;
 
   const masterSs = SpreadsheetApp.openByUrl(WAGE_CONFIG.MASTER_URL);
   
   _locationMasterMap = typeof fetchMasterData === 'function' ? fetchMasterData().map : {}; 
+
+  // ★追加：拠点名マスタ（departmentCode, clinicId）のキャッシュ
+  const nameSheet = masterSs.getSheetByName('拠点名');
+  _idMasterCache = {};
+  if (nameSheet) {
+    const data = nameSheet.getDataRange().getValues();
+    const headers = data[0];
+    const officialCol = headers.indexOf('正規記載');
+    const idCol = headers.indexOf('クリニックNo');
+    const deptCodeCol = headers.indexOf('departmentCode');
+    const yureCols = [];
+    headers.forEach((h, idx) => { if (String(h).includes('表記揺れ')) yureCols.push(idx); });
+
+    for (let i = 1; i < data.length; i++) {
+      const officialName = data[i][officialCol];
+      const clinicId = data[i][idCol];
+      const deptCode = (deptCodeCol !== -1 && data[i][deptCodeCol]) ? data[i][deptCodeCol] : "";
+      
+      if (!officialName || !clinicId) continue;
+      const mapData = { clinicId: clinicId, departmentCode: deptCode };
+      
+      _idMasterCache[_normalizeForSearch(officialName)] = mapData;
+      yureCols.forEach(c => {
+        const yureName = data[i][c];
+        if (yureName) _idMasterCache[_normalizeForSearch(yureName)] = mapData;
+      });
+    }
+  }
 
   // 2025年度データのキャッシュ
   const sheet2025 = masterSs.getSheetByName(WAGE_CONFIG.SHEET_2025);
@@ -17,7 +48,6 @@ function initializeWageData() {
   if (sheet2025) {
     const values = sheet2025.getRange('B2:O' + Math.max(2, sheet2025.getLastRow())).getValues();
     values.forEach(row => {
-      // ★修正: 2025年のマスタを読み込む際にも、表記ブレ補正(正規化)をかける
       const rawClinic = (row[0] || '').toString().trim();
       const clinic = _normalizeForSearch(rawClinic);
       const dept = (row[1] || '').toString().replace(/\s+/g, '');
@@ -49,13 +79,19 @@ function _normalizeForSearch(rawName) {
     .replace(/[\(（]?(内科|小児科|皮膚科|整形外科)[\)）]?/g, "") 
     .replace(/(病院|クリニック|診療所|モール)$/g, "") 
     .replace(/\s+/g, "") 
-    .replace(/ヶ/g, "ケ") // ← これが原因でした。マスタ側もケに揃えることで解決します
+    .replace(/ヶ/g, "ケ") 
     .trim();
 
-  // 特殊な略称の強制変換
   if (name === "千葉NT") name = "千葉ニュータウン中央";
 
   return name;
+}
+
+// ★追加：IDデータ取得用関数
+function getClinicIdData(rawClinicName) {
+  if (!_idMasterCache) initializeWageData();
+  const cleanLoc = _normalizeForSearch(rawClinicName);
+  return _idMasterCache[cleanLoc] || { clinicId: "", departmentCode: "" };
 }
 
 function _findRate2025(formalName, deptName) {
