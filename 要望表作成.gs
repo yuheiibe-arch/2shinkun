@@ -24,13 +24,16 @@ function append2ndConsultationRequests(sourceSheet) {
   const timeHeaders = data[2]; 
   
   const records = [];
-  let grandTotalCounts = 0;
+  
+  let grandTotalSlots = 0;
+  let grandTotalHours = 0;
+  let grandTotalFHours = 0; // ★ 追加：fのみの合計時間をカウントする変数
+  const uniqueClinics = new Set();
   
   for (let i = 3; i < data.length; i++) {
     let baseLoc = data[i][0];
     
-    // ★ここが原因でした。「break」を「continue」に変更（空欄行で止まらず次へ）
-    if (!baseLoc) continue; 
+    if (!baseLoc) break; 
     
     if (baseLoc === '千葉NT') baseLoc = '千葉ニュータウン中央';
     
@@ -42,7 +45,6 @@ function append2ndConsultationRequests(sourceSheet) {
       locName = `${baseLoc}（${dept}）`; 
     }
     
-    // ★亀有・北葛西のハードコード ＆ その他はマスタ検索
     let clinicId = '';
     if (baseLoc.includes('亀有')) {
       clinicId = dept === '内科' ? '13' : '11';
@@ -57,13 +59,16 @@ function append2ndConsultationRequests(sourceSheet) {
     for (let j = 2; j < data[i].length; j++) {
       let timeSlot = timeHeaders[j];
       
-      // ★安全装置：午前・午後・夜間 以外（金額など）は無視する
       if (timeSlot !== '午前' && timeSlot !== '午後' && timeSlot !== '夜間') continue;
 
-      const val = parseInt(data[i][j], 10);
-      if (!val || val < 1) continue;
+      let rawCell = String(data[i][j]).toLowerCase();
+      let matchNum = rawCell.match(/([0-9]+(\.[0-9]+)?)/);
+      if (!matchNum) continue;
+
+      const val = parseFloat(matchNum[1]);
+      if (val <= 0) continue;
       
-      if (typeof data[i][j] === 'string' && /[a-zA-Z]/.test(data[i][j])) continue;
+      const isF = rawCell.includes('f');
       
       const dateVal = dateHeaders[j];
       if (!dateVal) continue;
@@ -79,17 +84,16 @@ function append2ndConsultationRequests(sourceSheet) {
         if (val === 2) { start = '10:00'; end = '12:00'; hours = 2; }
         else if (val === 3) { start = '10:00'; end = '13:00'; hours = 3; }
         else if (val === 4) { start = '09:00'; end = '13:00'; hours = 4; }
+        else { start = '09:00'; end = '13:00'; hours = val; }
       } else if (timeSlot === '午後') {
-        // ★午後1を正しい時間（1h）に修正
         if (val === 1) { start = '17:00'; end = '18:00'; hours = 1; }
         else if (val === 2) { start = '15:00'; end = '17:00'; hours = 2; }
-        else { start = '15:00'; end = '18:00'; hours = 3; }
+        else { start = '15:00'; end = '18:00'; hours = val; } 
       } else if (timeSlot === '夜間') {
         if (val === 2) { start = '18:00'; end = '20:00'; hours = 2; }
-        else { start = '18:00'; end = '21:00'; hours = 3; }
+        else { start = '18:00'; end = '21:00'; hours = val; } 
       }
       
-      // ★北葛西の20時制限を追加
       if (baseLoc.includes('北葛西') && end === '21:00') {
         end = '20:00';
         if (start === '18:00' && hours === 3) hours = 2;
@@ -97,17 +101,26 @@ function append2ndConsultationRequests(sourceSheet) {
       
       if (hours === 0) continue;
       
+      let displayHours = isF ? hours + 'f' : hours;
+      
       records.push({
         loc: locName,
         dateObj: date,
         dateStr: Utilities.formatDate(date, "JST", "yyyy/MM/dd"),
         start: start,
         end: end,
-        hours: hours,
+        hoursNum: hours,
+        displayHours: displayHours,
         clinicId: clinicId
       });
       
-      grandTotalCounts += 1;
+      grandTotalSlots += 1;
+      grandTotalHours += hours;
+      // ★ 追加：fを含む場合は専用のカウンターにも足し算する
+      if (isF) {
+        grandTotalFHours += hours;
+      }
+      uniqueClinics.add(locName);
     }
   }
   
@@ -128,24 +141,27 @@ function append2ndConsultationRequests(sourceSheet) {
   
   for (let i = 0; i < records.length; i++) {
     const r = records[i];
-    const isLastRowOfAll = (i === records.length - 1);
-    
     outputValues.push([
       r.loc,
       r.dateStr,
       r.start,
       r.end,
-      r.hours,
-      isLastRowOfAll ? grandTotalCounts : '',
+      r.displayHours,
+      '',
       r.clinicId
     ]);
-    
-    outputColors.push([
-      null, null, null, null, null,
-      isLastRowOfAll ? null : '#cccccc',
-      null
-    ]);
+    outputColors.push([null, null, null, null, null, null, null]);
   }
+
+  // 末尾にサマリー行を追加
+  outputValues.push(['', '', '', '月間要望拠点数', uniqueClinics.size, '', '']);
+  outputValues.push(['', '', '', '月間要望枠数', grandTotalSlots, '', '']);
+  // ★ 修正：総要望時間の右の列（インデックス5）に「内f ◯時間」を出力
+  outputValues.push(['', '', '', '月間総要望時間', grandTotalHours, `内f ${grandTotalFHours}時間`, '']);
+  
+  outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', null, null]);
+  outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', null, null]);
+  outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', '#f3f3f3', null]); // f時間のセルもグレーに
   
   let targetSheet = ss.getSheetByName('２診要望一覧');
   if (!targetSheet) {
@@ -158,7 +174,6 @@ function append2ndConsultationRequests(sourceSheet) {
     headerRange.setHorizontalAlignment('left');
   }
 
-  // 対象月以降のデータを削除
   const targetMonthStart = new Date(targetYear, targetMonth - 1, 1);
   const existingData = targetSheet.getDataRange().getValues();
   let firstRowToDelete = -1;
@@ -184,14 +199,12 @@ function append2ndConsultationRequests(sourceSheet) {
     }
   }
   
-  // 新規データの追記
   const lastRow = targetSheet.getLastRow();
   const dataRange = targetSheet.getRange(lastRow + 1, 1, outputValues.length, 7);
   
   dataRange.setValues(outputValues);
   dataRange.setBackgrounds(outputColors); 
   dataRange.setHorizontalAlignment('left'); 
-  targetSheet.getRange(lastRow + 1, 5, outputValues.length, 2).setNumberFormat('0');
 }
 
 /**

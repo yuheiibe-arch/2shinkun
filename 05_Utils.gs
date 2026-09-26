@@ -53,7 +53,11 @@ function processAndPasteData(sheet, data) {
     for (let j = 2; j < row.length; j++) {
       const val = row[j];
       newRow.push(val ? val : '');
-      if (parseInt(val, 10) >= 1) hasValue = true;
+      
+      // 数字が含まれていれば行を残す（与野などの欠落防止）
+      if (/[0-9]/.test(String(val))) {
+        hasValue = true;
+      }
     }
     if (hasValue) outputData.push(newRow);
   }
@@ -72,6 +76,46 @@ function processAndPasteData(sheet, data) {
     });
     
     const finalData = header.concat(body);
-    sheet.getRange(1, 1, finalData.length, finalData[0].length).setValues(finalData);
+    const range = sheet.getRange(1, 1, finalData.length, finalData[0].length);
+    range.setValues(finalData);
+    
+    const backgrounds = [];
+    const fontColors = [];
+    const alignments = [];
+    
+    for (let r = 0; r < finalData.length; r++) {
+      const bgRow = [];
+      const fcRow = [];
+      const alignRow = [];
+      for (let c = 0; c < finalData[r].length; c++) {
+        const val = String(finalData[r][c]).toLowerCase();
+        
+        // カレンダーの数値部分（3行目以降 ＆ C列以降）
+        if (r >= 3 && c >= 2) {
+          alignRow.push('right'); // 数値部分は右詰め
+          
+          if (val.includes('f')) {
+            bgRow.push('#f3f3f3');
+            fcRow.push('#999999');
+          } else {
+            bgRow.push(null);
+            fcRow.push(null);
+          }
+        } else {
+          // 拠点名やヘッダー部分は左詰め
+          alignRow.push('left');
+          bgRow.push(null);
+          fcRow.push(null);
+        }
+      }
+      backgrounds.push(bgRow);
+      fontColors.push(fcRow);
+      alignments.push(alignRow);
+    }
+    
+    // 書式をまとめて適用
+    range.setBackgrounds(backgrounds);
+    range.setFontColors(fontColors);
+    range.setHorizontalAlignments(alignments);
   }
 }

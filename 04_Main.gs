@@ -7,7 +7,6 @@
 function runProcess(selectedSheetName) {
   const urlBookId = '1Ky5fXKvEWFodUwcu-HnHKiOBn6zdb090j79OjI6KNtk';
   const urlSheetName = 'URL';
-  const sourceRangeA1 = 'A150:CQ195';
   const destinationBook = SpreadsheetApp.getActiveSpreadsheet();
   const ui = SpreadsheetApp.getUi();
   const trimmedSheetName = selectedSheetName.trim();
@@ -34,6 +33,11 @@ function runProcess(selectedSheetName) {
     const sourceBook = SpreadsheetApp.openByUrl(sourceUrl);
     const sourceSheet = sourceBook.getSheetByName(trimmedSheetName);
     if (!sourceSheet) throw new Error(`シートが見つかりません: ${trimmedSheetName}`);
+    
+    // ★ここだけ変更：開始位置(A150)は固定のまま、終了行をシートの最終行まで動的に取得する
+    const lastRow = sourceSheet.getLastRow();
+    const endRow = lastRow > 195 ? lastRow : 195; 
+    const sourceRangeA1 = `A150:CQ${endRow}`;
     
     const sourceData = sourceSheet.getRange(sourceRangeA1).getValues();
     processAndPasteData(destinationSheet, sourceData);

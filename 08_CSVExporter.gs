@@ -52,7 +52,8 @@ function getClinicIdData(rawClinicName) {
 }
 
 function generateChunkedCSVSheets(book, year, month, singleShifts) {
-  const MAX_LIMIT = 190;
+  // ★ここを 190 から 900 に変更しました（日付区切りは維持されたまま、最大900行まで1シートにまとまります）
+  const MAX_LIMIT = 900;
   const dailyMap = {};
   
   singleShifts.forEach(s => {
