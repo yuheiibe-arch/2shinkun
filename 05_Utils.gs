@@ -46,18 +46,25 @@ function processAndPasteData(sheet, data) {
   
   for (let i = headerRows; i < data.length; i++) {
     const row = data[i];
+    // 元シート下部に空行や別ブロックがあってもここで安全に停止
+    if (!row[0]) break;
     if (row[0] === '千葉NT') row[0] = '千葉ニュータウン中央';
     
     let hasValue = false;
     const newRow = [row[0], row[1]];
     for (let j = 2; j < row.length; j++) {
       const val = row[j];
-      newRow.push(val ? val : '');
+      const valStr = String(val).trim();
       
-      // 数字が含まれていれば行を残す（与野などの欠落防止）
-      if (/[0-9]/.test(String(val))) {
+      // 数字が含まれていれば拠点行自体は残す（与野などの欠落防止）
+      if (/[0-9]/.test(valStr)) {
         hasValue = true;
       }
+
+      // 0 や 0f など数値が0以下のセルは書き出さず空欄にする（3f や 3 などの正数のみ出力）
+      const matchNum = valStr.match(/([0-9]+(\.[0-9]+)?)/);
+      const isPositive = matchNum && parseFloat(matchNum[1]) > 0;
+      newRow.push(isPositive ? val : '');
     }
     if (hasValue) outputData.push(newRow);
   }
