@@ -1,7 +1,7 @@
 /**
  * ====================================================================
  * 1. 作業リスト作成ロジック（Step1）
- * 【カレンダー1行目から読み取り ＆ 金額列誤爆防止 ＆ 午後1=1h】
+ * 【カレンダー1行目から読み取り ＆ 金額列誤爆防止 ＆ 柔軟な時間計算】
  * ====================================================================
  */
 
@@ -74,22 +74,38 @@ function createWorkList() {
         let timeSlot = "";
         let hours = valNum; 
 
+        // ==============================================================
+        // ★ 修正箇所：想定外の時間（夜間1hなど）が来ても必ず HH:mm~HH:mm に変換する
+        // ==============================================================
         if (timeHeaders[j] === '午前') {
-          if (valNum === 2) { timeSlot = '10:00~12:00'; hours = 2; }
+          if (valNum === 1) { timeSlot = '12:00~13:00'; hours = 1; }
+          else if (valNum === 2) { timeSlot = '10:00~12:00'; hours = 2; }
           else if (valNum === 3) { timeSlot = '10:00~13:00'; hours = 3; }
           else if (valNum === 4) { timeSlot = '09:00~13:00'; hours = 4; }
-          else { timeSlot = `午前(${valNum}h)`; } 
+          else { 
+            const st = 13 - Math.floor(valNum);
+            timeSlot = `${st < 10 ? '0'+st : st}:00~13:00`; 
+            hours = valNum; 
+          }
         } else if (timeHeaders[j] === '午後') {
-          // ★午後1を正しい時間（17:00-18:00 1h）に修正
           if (valNum === 1) { timeSlot = '17:00~18:00'; hours = 1; }
           else if (valNum === 2) { timeSlot = '15:00~17:00'; hours = 2; }
           else if (valNum === 3) { timeSlot = '15:00~18:00'; hours = 3; }
-          else { timeSlot = `午後(${valNum}h)`; }
+          else if (valNum === 4) { timeSlot = '14:00~18:00'; hours = 4; }
+          else { 
+            timeSlot = `${18 - Math.floor(valNum)}:00~18:00`; 
+            hours = valNum; 
+          }
         } else if (timeHeaders[j] === '夜間') {
-          if (valNum === 2) { timeSlot = '18:00~20:00'; hours = 2; }
+          if (valNum === 1) { timeSlot = '18:00~19:00'; hours = 1; }
+          else if (valNum === 2) { timeSlot = '18:00~20:00'; hours = 2; }
           else if (valNum === 3) { timeSlot = '18:00~21:00'; hours = 3; }
-          else { timeSlot = `夜間(${valNum}h)`; }
+          else { 
+            timeSlot = `18:00~${18 + Math.floor(valNum)}:00`; 
+            hours = valNum; 
+          }
         }
+        // ==============================================================
 
         const dayType = (dayOfWeek === '祝' || dayOfWeek === '日' || dayOfWeek === '土') ? 'hol' : 'wd';
         const clinicWages = getClinicWages(loc);

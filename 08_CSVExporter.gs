@@ -1,6 +1,7 @@
 /**
  * ====================================================================
  * CSV分割出力・IDマスタ取得ロジック
+ * 【連続シフトの時給分割(split)自動生成版】
  * ====================================================================
  */
 
@@ -52,7 +53,6 @@ function getClinicIdData(rawClinicName) {
 }
 
 function generateChunkedCSVSheets(book, year, month, singleShifts) {
-  // ★ここを 190 から 900 に変更しました（日付区切りは維持されたまま、最大900行まで1シートにまとまります）
   const MAX_LIMIT = 900;
   const dailyMap = {};
   
@@ -67,41 +67,52 @@ function generateChunkedCSVSheets(book, year, month, singleShifts) {
     const targetDate = dayShifts[0].dateStr;
     if (!rowsByDate[targetDate]) rowsByDate[targetDate] = [];
 
-    const pm = dayShifts.find(s => s.start === '17:00' && s.end === '20:00');
-    const ntTarget = dayShifts.find(s => s.start === '18:00' && (s.end === '20:00' || s.end === '21:00'));
+    // ==============================================================
+    // ★ 新処理：結合履歴(segments)から自動でCSVスプリットを生成
+    // 決め打ちの時間を廃止し、どんな時間の組み合わせでも対応可能に
+    // ==============================================================
+    dayShifts.forEach(s => {
+      let split1 = "", split2 = "", split3 = "";
+      let wage1 = "", wage2 = "", wage3 = "";
+      let finalWage = s.wageStr;
 
-    if (pm && ntTarget) {
-      const wages = String(pm.wageStr).split('/');
-      const w1 = wages[0] ? wages[0].trim() : "";
-      const w2 = wages[1] ? wages[1].trim() : w1;
-      
-      rowsByDate[targetDate].push({
-        departmentCode: pm.departmentCode || pm.clinicId, 
-        email: "doctor@example.com", date: targetDate,
-        startTime: "17:00", splitDateTime1: "18:00", splitDateTime2: "", splitDateTime3: "",
-        endTime: ntTarget.end, splitHourlyWage1: w1, splitHourlyWage2: "", splitHourlyWage3: "",
-        hourlyWage: w2, numberOfRooms: 1, delete: "", comment: `${pm.dept}外来`
-      });
-      dayShifts.forEach(s => {
-        if (s !== pm && s !== ntTarget) {
-          rowsByDate[targetDate].push({
-            departmentCode: s.departmentCode || s.clinicId, email: "doctor@example.com", date: targetDate,
-            startTime: s.start, splitDateTime1: "", splitDateTime2: "", splitDateTime3: "",
-            endTime: s.end, splitHourlyWage1: "", splitHourlyWage2: "", splitHourlyWage3: "",
-            hourlyWage: s.wageStr, numberOfRooms: 1, delete: "", comment: `${s.dept}外来`
-          });
+      if (s.segments && s.segments.length > 1) {
+        split1 = s.segments[1].start;
+        wage1 = s.segments[0].wage;
+        if (s.segments.length > 2) {
+           split2 = s.segments[2].start;
+           wage2 = s.segments[1].wage;
+           if (s.segments.length > 3) {
+             split3 = s.segments[3].start;
+             wage3 = s.segments[2].wage;
+             finalWage = s.segments[3].wage;
+           } else {
+             finalWage = s.segments[2].wage;
+           }
+        } else {
+           finalWage = s.segments[1].wage;
         }
+      }
+
+      rowsByDate[targetDate].push({
+        departmentCode: s.departmentCode || s.clinicId, 
+        email: "doctor@example.com", 
+        date: targetDate,
+        startTime: s.start, 
+        splitDateTime1: split1, 
+        splitDateTime2: split2, 
+        splitDateTime3: split3,
+        endTime: s.end, 
+        splitHourlyWage1: wage1, 
+        splitHourlyWage2: wage2, 
+        splitHourlyWage3: wage3,
+        hourlyWage: finalWage, 
+        numberOfRooms: 1, 
+        delete: "", 
+        comment: `${s.dept}外来`
       });
-    } else {
-      dayShifts.forEach(s => {
-        rowsByDate[targetDate].push({
-          departmentCode: s.departmentCode || s.clinicId, email: "doctor@example.com", date: targetDate,
-          startTime: s.start, splitDateTime1: "", splitDateTime2: "", splitDateTime3: "",
-          endTime: s.end, splitHourlyWage1: "", splitHourlyWage2: "", splitHourlyWage3: "",
-          hourlyWage: s.wageStr, numberOfRooms: 1, delete: "", comment: `${s.dept}外来`
-        });
-      });
-    }
+    });
+    // ==============================================================
   });
 
   const sortedDates = Object.keys(rowsByDate).sort();

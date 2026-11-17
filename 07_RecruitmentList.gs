@@ -1,7 +1,7 @@
 /**
  * ====================================================================
  * 2. 募集リスト作成 ＆ 定期・単独の振り分け（作業リストから読み込み）
- * 【北葛西20時制限 ＆ 内科2診アラート実装 版】
+ * 【北葛西20時制限 ＆ 内科2診アラート ＆ 連続シフト自動結合 版】
  * ====================================================================
  */
 
@@ -47,10 +47,13 @@ function createRecruitmentListFromActiveSheet() {
     const START_ROW = startIdx + 1; 
     const workData = data.slice(startIdx + 1); 
     const groups = {};
-    
-    // ★内科の2診シフトを検知・記録するためのセット
     const internalMedicineAlerts = new Set(); 
 
+    // ==============================================================
+    // ★ 修正箇所：連続シフト自動結合ロジック
+    // ==============================================================
+    // 1. 全シフトをパースして配列化
+    const parsedShifts = [];
     workData.forEach(row => {
       const [loc, dateVal, dayOfWeekRaw, weekNumRaw, timeSlot, wageStr, , deptRaw, dailyPayVal, hoursVal] = row;
       if (!loc || !dateVal || !wageStr) return; 
@@ -69,64 +72,105 @@ function createRecruitmentListFromActiveSheet() {
       const dayOfWeek = DAYS_OF_WEEK_JP[dateObj.getDay()];
       const groupDay = isHoliday ? '祝' : dayOfWeek;
       const weekNum = `第${Math.floor((dateObj.getDate() - 1) / 7) + 1}週`;
-
-      const timeStr = String(timeSlot);
-      let simpleTime = timeStr.replace('~', '-');
       
       let dept = deptRaw ? String(deptRaw).trim() : '小児科';
-
-      // ★内科シフトの場合はアラート用に記録しておく
       if (dept.includes('内科')) {
         internalMedicineAlerts.add(`${loc} (${Utilities.formatDate(dateObj, "JST", "MM/dd")})`);
       }
 
+      const timeStr = String(timeSlot);
       let start = '', end = '';
-      let hours = Number(hoursVal) || 0;
-      let dailyPay = Number(dailyPayVal) || 0;
-
       const m = timeStr.match(/(\d{2}:\d{2})~(\d{2}:\d{2})/);
       if (m) {
         start = m[1]; end = m[2]; 
       } else {
-        const hourMatch = timeStr.match(/(\d+)h/);
-        if (hourMatch) { start = '09:00'; end = `(${hourMatch[1]}h)`; }
+        return; // 無効なフォーマットはスキップ
       }
 
-      // ★「北葛西」のみ「20:00営業終了」制限を適用（亀有は除外）
+      let hours = Number(hoursVal) || 0;
+      let dailyPay = Number(dailyPayVal) || 0;
+      let wage = Number(wageStr) || 0;
+
       if (loc.includes('北葛西')) {
         if (end === '21:00') {
-          end = '20:00'; // 21時を20時で打ち切り
-          simpleTime = simpleTime.replace('21:00', '20:00');
-          // 18:00-21:00(3h)だった場合は2hに補正し、金額も2/3に調整
+          end = '20:00'; 
           if (start === '18:00' && hours === 3) {
             hours = 2;
             dailyPay = Math.floor((dailyPay / 3) * 2);
           }
         }
       }
+
+      parsedShifts.push({
+        loc, dept, dateObj, dateStr, dayOfWeek, groupDay, weekNum,
+        start, end, hours, dailyPay, wageStr: String(wage),
+        segments: [{ start, end, wage }] // CSV分割用の履歴を保持
+      });
+    });
+
+    // 2. 同日・同拠点の連続シフトを結合
+    const shiftsByDay = {};
+    parsedShifts.forEach(s => {
+      const key = `${s.loc}-${s.dept}-${s.dateStr}`;
+      if (!shiftsByDay[key]) shiftsByDay[key] = [];
+      shiftsByDay[key].push(s);
+    });
+
+    const mergedShifts = [];
+    Object.values(shiftsByDay).forEach(dayShifts => {
+      dayShifts.sort((a, b) => a.start.localeCompare(b.start));
+      let current = dayShifts[0];
       
-      const key = `${loc}-${dept}-${simpleTime}-${groupDay}`;
+      for (let i = 1; i < dayShifts.length; i++) {
+        const next = dayShifts[i];
+        if (current.end === next.start) {
+          // 時間が連続している場合は結合
+          current.end = next.end;
+          current.hours += next.hours;
+          current.dailyPay += next.dailyPay;
+          
+          const lastSeg = current.segments[current.segments.length - 1];
+          if (lastSeg.wage === next.segments[0].wage) {
+            // 時給が同じ場合はセグメントも結合
+            lastSeg.end = next.segments[0].end;
+            if (next.segments.length > 1) current.segments.push(...next.segments.slice(1));
+          } else {
+            // 時給が変わる場合は別セグメントとして追加
+            current.segments.push(...next.segments);
+          }
+          current.wageStr = current.segments.map(seg => seg.wage).join('/');
+        } else {
+          mergedShifts.push(current);
+          current = next;
+        }
+      }
+      mergedShifts.push(current);
+    });
+
+    // 3. 結合済みのシフトを使ってグループ化
+    mergedShifts.forEach(s => {
+      const simpleTime = `${s.start}-${s.end}`;
+      const key = `${s.loc}-${s.dept}-${simpleTime}-${s.groupDay}`;
 
       if (!groups[key]) {
-        let titleName = loc;
-        if (dept !== '小児科') titleName = `${loc}(${dept})`;
+        let titleName = s.loc;
+        if (s.dept !== '小児科') titleName = `${s.loc}(${s.dept})`;
         
         groups[key] = {
-          loc, dept, title: `${titleName}／${simpleTime}／${groupDay}`,
-          groupDay: groupDay, start, end, 
-          hours: hours,
-          wageStr: wageStr, dailyPay: dailyPay,
-          dates: []
+          loc: s.loc, dept: s.dept, title: `${titleName}／${simpleTime}／${s.groupDay}`,
+          groupDay: s.groupDay, start: s.start, end: s.end, 
+          hours: s.hours, wageStr: s.wageStr, dailyPay: s.dailyPay, dates: [],
+          segments: s.segments // CSV連携用に追加
         };
       }
       
       groups[key].dates.push({ 
-        date: dateObj, 
-        dateStr: dateStr, 
-        display: `${Utilities.formatDate(dateObj, "JST", "MM/dd")}(${dayOfWeek})`, 
-        weekNum: weekNum 
+        date: s.dateObj, dateStr: s.dateStr, 
+        display: `${Utilities.formatDate(s.dateObj, "JST", "MM/dd")}(${s.dayOfWeek})`, 
+        weekNum: s.weekNum 
       });
     });
+    // ==============================================================
 
     const output = [];
     const singleShiftsForCSV = []; 
@@ -187,7 +231,6 @@ function createRecruitmentListFromActiveSheet() {
           let clinicId = "";
           let deptCode = "";
 
-          // 亀有・北葛西のハードコード処理
           if (g.loc.includes('亀有')) {
             clinicId = g.dept.includes('内科') ? '13' : '11';
             deptCode = clinicId;
@@ -195,7 +238,6 @@ function createRecruitmentListFromActiveSheet() {
             clinicId = g.dept.includes('内科') ? '6' : '4';
             deptCode = clinicId;
           } else {
-            // その他の動的取得
             let idData = getClinicIdData(`${g.loc}（${g.dept}）`);
             if (!idData || !idData.clinicId) {
               idData = getClinicIdData(g.loc);
@@ -212,6 +254,7 @@ function createRecruitmentListFromActiveSheet() {
               start: g.start,
               end: g.end,
               wageStr: g.wageStr, 
+              segments: g.segments, // ★CSV分割用に追加
               clinicId: clinicId,
               departmentCode: deptCode
             });
@@ -256,7 +299,6 @@ function createRecruitmentListFromActiveSheet() {
       generateChunkedCSVSheets(book, targetYear, targetMonth, singleShiftsForCSV);
     }
 
-    // ★内科の2診が含まれていた場合のアラート表示
     if (internalMedicineAlerts.size > 0) {
       const alertMsg = Array.from(internalMedicineAlerts).slice(0, 15).join('\n') + 
                        (internalMedicineAlerts.size > 15 ? `\n...他 ${internalMedicineAlerts.size - 15} 件` : '');
