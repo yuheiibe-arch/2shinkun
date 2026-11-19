@@ -14,6 +14,8 @@ function onOpen() {
     .addSeparator()
     .addItem('1. 作業リストを作成', 'createWorkList')
     .addItem('2. ★募集リストを作成', 'createRecruitmentListFromActiveSheet')
+    .addSeparator()
+    .addItem('3. 📩 2診要望一覧をcapsへ送信', 'syncAllCooRequestsToCapsManual')
     .addToUi();
 }
 
@@ -31,7 +33,7 @@ function showSheetSelectionDialog() {
     return;
   }
 
-  // ★修正: 今月より前の過去の月をリストから除外する
+  // 今月より前の過去の月をリストから除外する
   const today = new Date();
   const currentYear = today.getFullYear();
   const currentMonth = today.getMonth() + 1;

@@ -1,6 +1,6 @@
 /**
  * ====================================================================
- * ２診要望一覧へのデータ転記ロジック (スマート削除・上書き機能付き)
+ * ２診要望一覧へのデータ転記ロジック (スマート削除・上書き・caps自動送信機能付き)
  * ====================================================================
  */
 function append2ndConsultationRequests(sourceSheet) {
@@ -27,7 +27,7 @@ function append2ndConsultationRequests(sourceSheet) {
   
   let grandTotalSlots = 0;
   let grandTotalHours = 0;
-  let grandTotalFHours = 0; // ★ 追加：fのみの合計時間をカウントする変数
+  let grandTotalFHours = 0; // fのみの合計時間をカウントする変数
   const uniqueClinics = new Set();
   
   for (let i = 3; i < data.length; i++) {
@@ -116,7 +116,6 @@ function append2ndConsultationRequests(sourceSheet) {
       
       grandTotalSlots += 1;
       grandTotalHours += hours;
-      // ★ 追加：fを含む場合は専用のカウンターにも足し算する
       if (isF) {
         grandTotalFHours += hours;
       }
@@ -156,12 +155,11 @@ function append2ndConsultationRequests(sourceSheet) {
   // 末尾にサマリー行を追加
   outputValues.push(['', '', '', '月間要望拠点数', uniqueClinics.size, '', '']);
   outputValues.push(['', '', '', '月間要望枠数', grandTotalSlots, '', '']);
-  // ★ 修正：総要望時間の右の列（インデックス5）に「内f ◯時間」を出力
   outputValues.push(['', '', '', '月間総要望時間', grandTotalHours, `内f ${grandTotalFHours}時間`, '']);
   
   outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', null, null]);
   outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', null, null]);
-  outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', '#f3f3f3', null]); // f時間のセルもグレーに
+  outputColors.push([null, null, null, '#f3f3f3', '#f3f3f3', '#f3f3f3', null]);
   
   let targetSheet = ss.getSheetByName('２診要望一覧');
   if (!targetSheet) {
@@ -205,6 +203,15 @@ function append2ndConsultationRequests(sourceSheet) {
   dataRange.setValues(outputValues);
   dataRange.setBackgrounds(outputColors); 
   dataRange.setHorizontalAlignment('left'); 
+
+  // ★『２診要望一覧』の更新完了と同時にcaps側へ暗号化パックを自動送信
+  try {
+    if (typeof sendEncryptedCooRequestsToCaps_ === 'function') {
+      sendEncryptedCooRequestsToCaps_(ss);
+    }
+  } catch (syncErr) {
+    console.warn('caps側へのCOO要望送信エラー: ' + syncErr.message);
+  }
 }
 
 /**
